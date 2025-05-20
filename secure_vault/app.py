@@ -72,98 +72,154 @@ class App(ctk.CTk):
         super().__init__()
         self.title("Secure Vault - Main")
         self.geometry("700x500")
-        #self.withdraw() # Hide the main window initially
+        
+        # Using self.withdraw() is generally good practice
+        #self.withdraw() # Hide the main window initially 
 
-        self.master_password_ok = False # Flag to indicate successful authentication
-        self.master_password_plaintext = None # Store plaintext only briefly if needed for key derivation
-        # self.is_first_run = True # Placeholder, will be determined by storage check
+        self.master_password_ok = False
+        self.derived_encryption_key = None # To store the key derived from master_password
 
-        # This is where you'd check if the master password exists
-        try:
-            # This is where you'd call storage.check_if_master_password_exists() or similar
-            # For now, let's simulate it. If a file "master_hash.json" exists, it's not first run.
-            with open("master_hash.json", "r") as f: # Replace with actual storage check
-                self.is_first_run = False
-            print("Detected existing setup (master_hash.json found). Not first run.")
-        except FileNotFoundError:
-            self.is_first_run = True
-            print("No existing setup detected. This is the first run.")
+        # Determine if this is the first run using the storage module
+        self.is_first_run = storage.is_first_run_check()
+        if self.is_first_run:
+            print("No existing setup detected (master_config.json not found). This is the first run.")
+        else:
+            print(f"Detected existing setup ({storage.MASTER_HASH_FILE} found). Not first run.")
 
         if self._perform_authentication():
             self.master_password_ok = True
-            self.deiconify() # Show main window
+            self.deiconify() # Show main window ONLY after successful auth
             self._setup_main_ui()
         else:
-            # App will exit via __main__ block logic
-            pass
+            # App will exit via __main__ block logic or if user closes password dialog
+            # If _perform_authentication returns False, self.master_password_ok remains False
+            # and the mainloop won't start.
+            # If withdraw() was used, the app just closes. If not, an empty main window might have flashed.
+            self.quit() # Ensure app exits if auth fails.
 
     def _perform_authentication(self):
-        """
-        Manages the display of the password dialog and processing its result.
-        Returns True if authentication is successful, False otherwise.
-        """
         dialog_title = "Set Master Password" if self.is_first_run else "Enter Master Password"
-        
         password_dialog = PasswordDialog(self, title=dialog_title)
         self.wait_window(password_dialog) # Wait for dialog to be destroyed
 
-        if self.master_password_plaintext: # This will be set by a successful handle_password_submission
-            print("Authentication successful via _perform_authentication.")
+        # password_dialog.password_value is set by the dialog
+        # self.derived_encryption_key will be set by a successful handle_password_submission
+        if self.derived_encryption_key:
+            print("Authentication successful: Encryption key derived.")
             return True
         else:
-            print("Authentication failed or cancelled via _perform_authentication.")
+            print("Authentication failed or cancelled: Encryption key not derived.")
             return False
 
 
     def handle_password_submission(self, entered_password, error_label_widget):
-        """
-        Called by PasswordDialog.
-        Handles setting or verifying the master password.
-        Updates the error_label_widget in the dialog directly.
-        Returns True on success, False on failure.
-        """
         if self.is_first_run:
-            if len(entered_password) < 1: # Simpler check for testing now
-                error_label_widget.configure(text="Password must be at least 1 characters (test).")
+            # Basic password policy (can be more complex)
+            if len(entered_password) < 8: # Enforce a minimum length
+                error_label_widget.configure(text="Password must be at least 8 characters.")
                 return False
-            
-            print(f"Setting up new master password (placeholder): {entered_password}")
-            # TODO:
-            # 1. Generate salt
-            # 2. Hash password with salt (using crypto_utils.hash_password)
-            # 3. Store salt and hash (using storage.save_master_password_hash)
-            # 4. Derive encryption key from entered_password, store in self.derived_key
-            self.master_password_plaintext = entered_password # Store temporarily
-            self.is_first_run = False 
-            error_label_widget.configure(text="") # Clear error
-            return True
-        else: # Not first run (verifying existing password)
-            print(f"Verifying existing master password (placeholder): {entered_password}")
-            # TODO:
-            # 1. Load salt and hash (using storage.load_master_password_hash)
-            # 2. Verify entered_password against stored hash (using crypto_utils.verify_password)
-            # 3. If verified, derive encryption key, store in self.derived_key
-            
-            # Simulate verification
-            if entered_password == "test": # Placeholder for correct password
-                self.master_password_plaintext = entered_password
+
+            try:
+                # 1. Hash the new master password (Argon2 handles salt internally)
+                hashed_password_string = crypto_utils.hash_password(entered_password)
+                
+                # 2. Save the hashed password string
+                storage.save_master_hash(hashed_password_string)
+
+                # 3. Generate and save a new salt for encryption key derivation
+                encryption_key_salt = crypto_utils.generate_salt(crypto_utils.ENCRYPTION_KEY_SALT_LEN)
+                storage.save_encryption_key_salt(encryption_key_salt)
+
+                # 4. Derive the encryption key using the plaintext password and the new salt
+                self.derived_encryption_key = crypto_utils.derive_encryption_key(
+                    entered_password, 
+                    encryption_key_salt
+                )
+                # CRITICAL: Clear plaintext password from memory as much as possible
+                # In Python, direct memory clearing is tricky. Reassigning is the best we can do.
+                entered_password = None 
+                
+                self.is_first_run = False # No longer first run
                 error_label_widget.configure(text="") # Clear error
+                print("Master password setup successful. Encryption key derived.")
                 return True
-            else:
-                error_label_widget.configure(text="Invalid password.")
+            except Exception as e:
+                error_label_widget.configure(text=f"Setup error: {e}")
+                print(f"Error during first run setup: {e}")
+                # Potentially clean up partially created files if necessary
+                return False
+        else: # Not first run (verifying existing password)
+            try:
+                # 1. Load the stored Argon2 hash string
+                stored_hashed_password_string = storage.load_master_hash()
+                if not stored_hashed_password_string:
+                    error_label_widget.configure(text="Error: Master password data not found.")
+                    return False # Should not happen if not first_run, but good check
+
+                # 2. Verify the entered password against the stored hash
+                if crypto_utils.verify_password(stored_hashed_password_string, entered_password):
+                    # 3. Load the salt for encryption key derivation
+                    encryption_key_salt = storage.load_encryption_key_salt()
+                    if not encryption_key_salt:
+                        error_label_widget.configure(text="Error: Encryption key salt not found.")
+                        # This is a critical error state, indicates data corruption/tampering
+                        return False
+                    
+                    # 4. Derive the encryption key
+                    self.derived_encryption_key = crypto_utils.derive_encryption_key(
+                        entered_password,
+                        encryption_key_salt
+                    )
+                    entered_password = None # Clear plaintext password
+
+                    error_label_widget.configure(text="") # Clear error
+                    print("Master password verified. Encryption key derived.")
+                    return True
+                else:
+                    error_label_widget.configure(text="Invalid password.")
+                    return False
+            except Exception as e:
+                error_label_widget.configure(text=f"Login error: {e}")
+                print(f"Error during login: {e}")
                 return False
 
     def _setup_main_ui(self):
-        self.label = ctk.CTkLabel(self, text=f"Welcome! Vault is Unlocked.\nMaster Password (temp): {self.master_password_plaintext}")
+        # Now we don't want to display the master password here
+        self.label = ctk.CTkLabel(self, text="Welcome! Vault is Unlocked.")
         self.label.pack(pady=20, padx=20)
 
-        self.add_secret_button = ctk.CTkButton(self, text="Add New Secret (TODO)")
+        self.add_secret_button = ctk.CTkButton(self, text="Add New Secret (TODO)", command=self.add_secret_dialog) # Added command
         self.add_secret_button.pack(pady=10)
 
-        self.view_secrets_listbox = ctk.CTkTextbox(self, width=400, height=200)
-        self.view_secrets_listbox.pack(pady=10)
-        self.view_secrets_listbox.insert("0.0", "Secrets will be listed here (TODO)")
-        self.view_secrets_listbox.configure(state="disabled")
+        # We'll use a CTkTextbox to display secrets for now
+        self.secrets_display = ctk.CTkTextbox(self, width=600, height=300)
+        self.secrets_display.pack(pady=10, padx=10, fill="both", expand=True)
+        self.secrets_display.insert("0.0", "Secrets will be listed here...\n")
+        self.secrets_display.configure(state="disabled") # Make it read-only initially
+        
+        # Add a refresh/load button
+        self.load_secrets_button = ctk.CTkButton(self, text="Load/Refresh Secrets (TODO)", command=self.load_and_display_secrets)
+        self.load_secrets_button.pack(pady=5)
+
+    def add_secret_dialog(self):
+        # TODO: Implement a dialog to add a new secret (label and value)
+        print("TODO: Open dialog to add a new secret")
+        # This dialog will need to get label & secret, then call a method
+        # to encrypt and save it using self.derived_encryption_key and storage.py functions
+    
+    def load_and_display_secrets(self):
+        # TODO: Implement loading, decrypting, and displaying secrets
+        print("TODO: Load, decrypt, and display secrets")
+        # 1. Call storage.load_encrypted_secrets() -> returns encrypted blob
+        # 2. If blob exists, call crypto_utils.decrypt_data(self.derived_encryption_key, blob)
+        #    This will require implementing actual encryption/decryption using Fernet or AES-GCM
+        #    and handling the structure of the stored secrets (e.g., a list of encrypted dicts).
+        # 3. Parse the decrypted data (e.g., JSON list of {"label": "foo", "value": "bar"})
+        # 4. Update self.secrets_display
+        self.secrets_display.configure(state="normal")
+        self.secrets_display.delete("1.0", "end")
+        self.secrets_display.insert("0.0", "Secrets loaded (placeholder - actual data TODO)\n")
+        self.secrets_display.configure(state="disabled")
 
 if __name__ == "__main__":
     app = App() # Create the app instance

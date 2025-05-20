@@ -27,7 +27,7 @@ def generate_salt(length: int = ARGON2_SALT_LEN) -> bytes:
     """Generates a cryptographically strong random salt."""
     return os.urandom(length)
 
-def hash_password(password: str, salt: bytes) -> str:
+def hash_password(password: str) -> str:
     """
     Hashes a password using Argon2id with a provided salt.
     Note: Argon2's PasswordHasher class can also generate its own salt
