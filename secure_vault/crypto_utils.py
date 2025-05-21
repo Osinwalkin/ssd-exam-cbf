@@ -1,10 +1,10 @@
 import os
+import base64
 import argon2 # For password hashing
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
-# For AEAD encryption (will add later)
-# from cryptography.fernet import Fernet 
+from cryptography.fernet import Fernet, InvalidToken
 
 # Argon2 Parameters (good defaults, can be tuned)
 ARGON2_TIME_COST = 3      # Number of iterations
@@ -81,11 +81,34 @@ def derive_encryption_key(master_password: str, salt: bytes) -> bytes:
     key = hkdf.derive(master_password.encode('utf-8'))
     return key
 
-# def encrypt_data(key: bytes, plaintext_data: bytes) -> bytes:
-#     f = Fernet(key) # Fernet key must be urlsafe_base64_encode(32 random bytes)
-                       # Our derived key is raw 32 bytes, need to encode it for Fernet
-#     return f.encrypt(plaintext_data)
+def get_fernet_key(raw_derived_key: bytes) -> bytes:
+    """Converts a 32-byte raw key to a URL-safe base64 encoded Fernet key."""
+    if not isinstance(raw_derived_key, bytes) or len(raw_derived_key) != 32:
+        raise ValueError("Raw derived key must be 32 bytes.")
+    return base64.urlsafe_b64encode(raw_derived_key)
 
-# def decrypt_data(key: bytes, ciphertext_data: bytes) -> bytes:
-#     f = Fernet(key)
-#     return f.decrypt(ciphertext_data)
+def encrypt_data(fernet_key: bytes, plaintext_data: bytes) -> bytes:
+    """Encrypts data using Fernet."""
+    if not isinstance(plaintext_data, bytes):
+        raise TypeError("Plaintext data must be bytes for encryption.")
+    f = Fernet(fernet_key)
+    ciphertext = f.encrypt(plaintext_data)
+    return ciphertext
+
+def decrypt_data(fernet_key: bytes, ciphertext_data: bytes) -> bytes | None:
+    """
+    Decrypts data using Fernet.
+    Returns decrypted bytes on success, None on InvalidToken (tampering/wrong key).
+    """
+    if not isinstance(ciphertext_data, bytes):
+        raise TypeError("Ciphertext data must be bytes for decryption.")
+    f = Fernet(fernet_key)
+    try:
+        decrypted_data = f.decrypt(ciphertext_data)
+        return decrypted_data
+    except InvalidToken:
+        print("Decryption failed: Invalid token (data might be tampered or wrong key used).")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred during decryption: {e}")
+        return None # Or re-raise a custom app exception

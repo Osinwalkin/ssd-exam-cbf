@@ -56,6 +56,30 @@ def load_encryption_key_salt() -> bytes | None:
         print(f"Error loading encryption key salt: {e}")
         return None
 
-# --- Placeholder for secrets storage ---
-# def save_encrypted_secrets(data: bytes): ...
-# def load_encrypted_secrets() -> bytes | None: ...
+# encrypted secrets storage
+def save_encrypted_secrets(encrypted_data_blob: bytes):
+    """Saves the blob of encrypted secrets to the secrets file."""
+    try:
+        with open(SECRETS_FILE, "wb") as f: # Write in binary mode
+            f.write(encrypted_data_blob)
+        print(f"Encrypted secrets saved to {SECRETS_FILE}")
+    except IOError as e:
+        print(f"Error saving encrypted secrets: {e}")
+        # Consider raising a custom app exception for the UI to handle
+        raise # Re-raise for now
+
+def load_encrypted_secrets() -> bytes | None:
+    """
+    Loads the blob of encrypted secrets from the secrets file.
+    Returns the byte string if the file exists, None otherwise.
+    """
+    if not os.path.exists(SECRETS_FILE):
+        print(f"Secrets file ({SECRETS_FILE}) not found. Assuming no secrets yet.")
+        return None # No secrets file yet, perfectly normal for a new vault
+    try:
+        with open(SECRETS_FILE, "rb") as f: # Read in binary mode
+            return f.read()
+    except IOError as e:
+        print(f"Error loading encrypted secrets: {e}")
+        # Consider raising a custom app exception
+        return None # Or re-raise
