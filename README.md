@@ -32,10 +32,10 @@ Formålet med projektet er at demonstrere design og implementering af en sikker 
 
 ## Setup og Installation
 
-2.  **Klon Repository (hvis relevant):**
+2.  **Klon Repository:**
 
-    git clone repository-url
-    cd repository-navn
+*   git clone repository url
+*   cd repository navn
 
 3.  **Opret og lav virtual environment:**
     python -m venv venv
