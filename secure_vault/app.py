@@ -1,16 +1,20 @@
+# GUI ting til Secure Vault appen
 import customtkinter as ctk
 import tkinter.messagebox as messagebox
+
+import json
 from . import crypto_utils
 from . import storage
-import json
 
+# udseende af appen
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
+# Dialog vindue til at indtaste master password
 class PasswordDialog(ctk.CTkToplevel):
-    def __init__(self, parent, title="Master Password"): # 'parent' is passed in
+    def __init__(self, parent, title="Master Password"):
         super().__init__(parent)
-        self.parent_app = parent # Store it as self.parent_app  <<< CORRECTION HERE
+        self.parent_app = parent
         self.title(title)
         self.lift()
         self.attributes("-topmost", True)
@@ -40,11 +44,12 @@ class PasswordDialog(ctk.CTkToplevel):
 
         self.password_entry.focus_set()
 
+    # Håndterer enter knappetryk i password feltet
     def _submit_password_event(self, event): 
-        """Handles the <Return> key press in the password entry."""
         self._submit_password()
 
-    def _submit_password(self): # event is passed when bound to <Return>
+    # Håndterer submit knappen
+    def _submit_password(self):
         entered_password = self.password_entry.get()
         if not entered_password:
             self.error_label.configure(text="Password cannot be empty.")
@@ -55,20 +60,16 @@ class PasswordDialog(ctk.CTkToplevel):
             self.grab_release()
             self.destroy()
         else:
-            self.password_value = None 
-            # Error message set by parent_app.handle_password_submission
+            self.password_value = None
 
+    # Håndterer lukning af dialog vinduet
     def _on_closing(self):
-        # This method is called when the dialog is closed (e.g., by clicking the X button)
-        # We can set the password_value to None to indicate cancellation
         self.password_value = None
         self.grab_release()
         self.destroy()
 
-    #def get_password(self):
-        #self.master.wait_window(self) # Wait for dialog to close
-        #return self.password_value
-
+# Tilføjelse af ny secret vindue
+# Dette vindue åbnes når brugeren vil tilføje en ny secret
 class AddSecretDialog(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -106,11 +107,9 @@ class AddSecretDialog(ctk.CTkToplevel):
         self.cancel_button.pack(side="right")
         
         self.error_label = ctk.CTkLabel(self.main_frame, text="", text_color="red")
-        # Pack error label later if needed, or integrate into dialog flow. For now, simple.
-        # self.error_label.pack(pady=(5,0))
 
         self.label_entry.focus_set()
-        self.value_entry.bind("<Return>", self._save_secret_event) # Allow enter in value field to save
+        self.value_entry.bind("<Return>", self._save_secret_event)
 
     def _toggle_secret_visibility(self):
         if self.show_secret_var.get():
@@ -121,12 +120,12 @@ class AddSecretDialog(ctk.CTkToplevel):
     def _save_secret_event(self, event):
         self._save_secret()
 
+    # Validerer input og gemmer secret hvis det er gyldigt
     def _save_secret(self):
         label = self.label_entry.get().strip()
-        value = self.value_entry.get() # Don't strip secret value, spaces might be intentional
+        value = self.value_entry.get()
 
         if not label or not value:
-            # Simple error handling for now, could update self.error_label
             print("Error: Label and Secret Value cannot be empty.")
             messagebox.showerror("Input Error", "Label and Secret Value cannot be empty.", parent=self)
             return
@@ -141,19 +140,22 @@ class AddSecretDialog(ctk.CTkToplevel):
         self.destroy()
 
 
+# Hovedvinduet for Secure Vault appen
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Secure Vault - Main")
         self.geometry("700x500")
         
-        #self.withdraw() # Hide the main window initially 
+        # gemmer vinduet indtil password er autentificeret (Har kommenteret ud fordi det ikke virker lige nu)
+        #self.withdraw() 
 
+        # variabler til at gemme master password og krypteringsnøgle
         self.master_password_ok = False
         self.derived_encryption_key = None
         self.fernet_handler = None
 
-        # Determine if this is the first run using the storage module
+        # Tjekker om det er første gang appen køres
         self.is_first_run = storage.is_first_run_check()
         if self.is_first_run:
             print("No existing setup detected (master_config.json not found). This is the first run.")
@@ -167,12 +169,12 @@ class App(ctk.CTk):
         else:
             self.quit()  
 
+    # Håndterer autentificering af master password
     def _perform_authentication(self):
         dialog_title = "Set Master Password" if self.is_first_run else "Enter Master Password"
         password_dialog = PasswordDialog(self, title=dialog_title)
         self.wait_window(password_dialog) 
 
-        # Check self.fernet_handler after dialog closes
         if self.fernet_handler:
             print("Authentication successful: Fernet key prepared.")
             return True
@@ -181,25 +183,32 @@ class App(ctk.CTk):
             return False
 
 
+    # Håndterer logic for opsætning (first run) eller verificering af master password
+    # Metoden bliver kaldt fra PasswordDialog
     def handle_password_submission(self, entered_password, error_label_widget):
         if self.is_first_run:
+            # Opsætning af master password
             if len(entered_password) < 8:
                 error_label_widget.configure(text="Password must be at least 8 characters.")
                 return False
             try:
+                # Hash det nye master password og gem det (Argon2)
                 hashed_password_string = crypto_utils.hash_password(entered_password)
                 storage.save_master_hash(hashed_password_string)
 
+                # Gem salt til krypteringsnøgle
+                # (HKDF salt genereres internt i crypto_utils)
                 encryption_key_salt = crypto_utils.generate_salt(crypto_utils.ENCRYPTION_KEY_SALT_LEN)
                 storage.save_encryption_key_salt(encryption_key_salt)
 
+                # Deriver krypteringsnøgle fra plaintext password og og HDKF salt
                 self.derived_encryption_key = crypto_utils.derive_encryption_key(
                     entered_password, encryption_key_salt
                 )
-                # ---- Initialize fernet_handler ----
+                # Konverter krypteringsnøglen til Fernet-nøgle
                 self.fernet_handler = crypto_utils.get_fernet_key(self.derived_encryption_key)
-                # -----------------------------------
-                
+
+                # Variabler til at nulstille password og status
                 entered_password = None 
                 self.is_first_run = False
                 error_label_widget.configure(text="")
@@ -209,25 +218,30 @@ class App(ctk.CTk):
                 error_label_widget.configure(text=f"Setup error: {e}")
                 print(f"Error during first run setup: {e}")
                 return False
-        else: # Not first run
+        else:
+            # IKKE first run: Verificer master password
             try:
+                # Hent den gemte Argon2 hash af master password
                 stored_hashed_password_string = storage.load_master_hash()
                 if not stored_hashed_password_string:
                     error_label_widget.configure(text="Error: Master password data not found.")
                     return False
-
+                
+                # Verificer det indtastede password mod den gemte hash
                 if crypto_utils.verify_password(stored_hashed_password_string, entered_password):
+                    # Hent salt til krypteringsnøgle
                     encryption_key_salt = storage.load_encryption_key_salt()
                     if not encryption_key_salt:
                         error_label_widget.configure(text="Error: Encryption key salt not found.")
                         return False # Critical error
                     
+                    # Deriver krypteringsnøgle fra det indtastede password og salt
                     self.derived_encryption_key = crypto_utils.derive_encryption_key(
-                        entered_password, encryption_key_salt
+                        entered_password, 
+                        encryption_key_salt
                     )
-                    # ---- Initialize fernet_handler ----
+                    # Konverter krypteringsnøglen til Fernet-nøgle
                     self.fernet_handler = crypto_utils.get_fernet_key(self.derived_encryption_key)
-                    # -----------------------------------
 
                     entered_password = None
                     error_label_widget.configure(text="")
@@ -237,10 +251,11 @@ class App(ctk.CTk):
                     error_label_widget.configure(text="Invalid password.")
                     return False
             except Exception as e:
-                error_label_widget.configure(text=f"Login error: {e}") # Show generic error on dialog
-                print(f"Error during login: {e}") # Log specific error
+                error_label_widget.configure(text=f"Login error: {e}")
+                print(f"Error during login: {e}")
                 return False
 
+    # Håndterer opsætning af UI efter autentificering
     def _setup_main_ui(self):
         self.label = ctk.CTkLabel(self, text="Welcome! Vault is Unlocked.")
         self.label.pack(pady=20, padx=20)
@@ -250,19 +265,19 @@ class App(ctk.CTk):
 
         self.secrets_display = ctk.CTkTextbox(self, width=600, height=300)
         self.secrets_display.pack(pady=10, padx=10, fill="both", expand=True)
-        # self.secrets_display.insert("0.0", "Secrets will be listed here...\n") # Loaded by load_and_display_secrets
         self.secrets_display.configure(state="disabled") 
         
         self.load_secrets_button = ctk.CTkButton(self, text="Load/Refresh Secrets", command=self.load_and_display_secrets)
         self.load_secrets_button.pack(pady=5) 
 
-        # Automatically load secrets when UI is setup
         self.load_and_display_secrets()
     
+    # Loader secrets fra filen og dekrypterer dem
+    # Returnerer en liste af secrets
     def _get_decrypted_secrets_list(self) -> list:
         if not self.fernet_handler:
             print("Error: Encryption key not available for decryption (fernet_handler not set).")
-            # messagebox.showerror("Internal Error", "Encryption key not available.", parent=self) # Optional
+            messagebox.showerror("Internal Error", "Encryption key not available.", parent=self) # Optional
             return []
 
         encrypted_blob = storage.load_encrypted_secrets()
@@ -270,8 +285,10 @@ class App(ctk.CTk):
             return [] 
 
         try:
+            # Dekrypterer den gemte blob med Fernet
             decrypted_json_bytes = crypto_utils.decrypt_data(self.fernet_handler, encrypted_blob)
             if decrypted_json_bytes:
+                # Parser JSON data til Python liste
                 secrets_list = json.loads(decrypted_json_bytes.decode('utf-8'))
                 return secrets_list
             else:
@@ -288,14 +305,15 @@ class App(ctk.CTk):
             messagebox.showerror("Error", f"Unexpected error during decryption: {e}", parent=self)
             return []
         
+    # Gemmer secrets til en JSON fil efter kryptering
     def _save_secrets_list(self, secrets_list: list) -> bool:
         if not self.fernet_handler:
             print("Error: Encryption key not available for encryption (fernet_handler not set).")
-            # messagebox.showerror("Internal Error", "Encryption key not available for saving.", parent=self) # Optional
+            messagebox.showerror("Internal Error", "Encryption key not available for saving.", parent=self)
             return False
         
         try:
-            json_bytes = json.dumps(secrets_list, indent=4).encode('utf-8') # Added indent for readability if manually inspecting
+            json_bytes = json.dumps(secrets_list, indent=4).encode('utf-8')
             encrypted_blob = crypto_utils.encrypt_data(self.fernet_handler, json_bytes)
             storage.save_encrypted_secrets(encrypted_blob)
             return True
@@ -304,9 +322,10 @@ class App(ctk.CTk):
             messagebox.showerror("Save Error", f"Could not save secrets: {e}", parent=self)
             return False
         
+    # Åbner dialog vindue til at tilføje en ny secret
     def add_secret_dialog(self):
         if not self.fernet_handler: 
-            messagebox.showerror("Error", "Cannot add secret: Vault not properly initialized.", icon="error", parent=self) # icon works with standard messagebox
+            messagebox.showerror("Error", "Cannot add secret: Vault not properly initialized.", icon="error", parent=self)
             return
 
         dialog = AddSecretDialog(self)
@@ -326,9 +345,10 @@ class App(ctk.CTk):
                 print(f"Secret '{new_data['label']}' added and saved.")
                 self.load_and_display_secrets() 
             else:
-                # Error message already shown by _save_secrets_list
                 print("Failed to save the new secret after adding.")
     
+    # Loader og viser secrets i tekstfeltet, man kan klikke på den blå label for at kopiere til clipboard
+    # Ikke særlig pænt men det virker hvis man trykker på det blå highlightede tekst
     def load_and_display_secrets(self):
         self.secrets_display.configure(state="normal")
         self.secrets_display.delete("1.0", "end")
@@ -338,30 +358,19 @@ class App(ctk.CTk):
         if not secrets:
             self.secrets_display.insert("0.0", "No secrets found or vault is empty.\n")
         else:
-            header = f"{'Label':<30} | {'Value (click label to copy)':<50}\n" # Clarified click target
+            header = f"{'Label':<30} | {'Value (click label to copy)':<50}\n"
             self.secrets_display.insert("0.0", header)
-            self.secrets_display.insert("end", "-"*len(header.strip()) + "\n") # Dynamic separator length
+            self.secrets_display.insert("end", "-"*len(header.strip()) + "\n")
             for i, secret_item in enumerate(secrets):
                 label = secret_item.get('label', 'N/A')
-                display_text = f"{label:<30} | {'*' * 10:<50}\n" # Keep value obfuscated
+                display_text = f"{label:<30} | {'*' * 10:<50}\n"
                 
                 tag_name = f"secret_tag_{i}"
-                # Insert label text first, then the rest of the line. Apply tag only to label part.
-                # This is a bit tricky with CTkTextbox. A simpler way for now is to tag the whole line.
-                # If you want only the label clickable, you'd insert label, tag it, then insert rest.
-                # For now, tagging the whole line for click is fine.
-                current_pos = self.secrets_display.index("end-1c") # Get position before newline
+                current_pos = self.secrets_display.index("end-1c")
                 self.secrets_display.insert("end", display_text)
-                # Let's try tagging just the label part.
-                # This requires inserting label, then the rest.
-                # Simpler: tag the whole line and let user know by text.
 
-                # current_line_start = self.secrets_display.index(f"end-{len(display_text)+1}c") # Start of the inserted line
-                # self.secrets_display.tag_add(tag_name, current_line_start, f"{current_line_start}+{len(label)}c") # Tag only label
-
-                # Simpler approach for now: tag the whole line
-                line_start_index = self.secrets_display.index(f"end-{len(display_text.rstrip())+1}c") # Start of current line text
-                line_end_index = self.secrets_display.index("end-1c") # End of current line text
+                line_start_index = self.secrets_display.index(f"end-{len(display_text.rstrip())+1}c")
+                line_end_index = self.secrets_display.index("end-1c")
                 self.secrets_display.tag_add(tag_name, line_start_index, line_end_index)
 
                 self.secrets_display.tag_config(tag_name, foreground="cyan") 
