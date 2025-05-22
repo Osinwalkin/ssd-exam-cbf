@@ -10,7 +10,7 @@ Formålet med projektet er at demonstrere design og implementering af en sikker 
 
 *   **Master Password Adgangskontrol:** Adgang til vaulten og secrets er beskyttet af en master password som brugeren indtaster på første run.
 *   **Password Hashing:** Brugerens master password hashes med **Argon2id**, en Key Derivation Function (KDF), før den sammenlignes eller gemmes (kun hashen gemmes). Dette beskytter mod offline brute-force angreb (hvis nogen skulle få adgang til pcen).
-*   **Saltning:** Der anvendes tilfældigt genererede salts både til password hashing (håndteres internt af Argon2id-library) og til deriving af krypteringsnøglen (via HKDF).
+*   **Salt:** Der anvendes tilfældigt genererede salts både til password hashing (håndteres internt af Argon2id-library) og til deriving af krypteringsnøglen (via HKDF).
 *   **Derivation af krypteringsnøgle:** En dedikeret krypteringsnøgle derives fra master passwordet og et separat salt ved hjælp af HKDF med SHA256. Dette sikrer at master passwordet ikke direkte bruges som krypteringsnøgle.
 *   **Autentificeret Kryptering (AEAD):** Følsomme data (gemte secrets) krypteres med **AES-256** via `cryptography.fernet` libary. AES-GCM tilbyder både fortrolighed (confidentiality) og integritet/autenticitet (integrity/authenticity), hvilket beskytter mod både datalækager og datamanipulation (tampering).
 *   **Sikker Opbevaring:**
